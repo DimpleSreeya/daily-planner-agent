@@ -1,0 +1,16 @@
+# Node modules
+node_modules/
+backend/node_modules/
+
+# Environment files with secret API keys
+.env
+backend/.env
+
+# Build files
+dist/
+
+# Local mock data
+backend/data/store.json
+
+# Logs
+*.log
