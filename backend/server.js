@@ -40,24 +40,133 @@ const app = express();
 const PORT =
   Number(process.env.PORT) || 5000;
 
-const FRONTEND_URL =
-  process.env.FRONTEND_URL ||
-  "http://localhost:5173";
+/*
+|--------------------------------------------------------------------------
+| CORS CONFIGURATION
+|--------------------------------------------------------------------------
+|
+| FRONTEND_URL can contain one URL:
+|
+| FRONTEND_URL=https://your-site.netlify.app
+|
+| Or multiple URLs separated by commas:
+|
+| FRONTEND_URL=https://site1.netlify.app,https://site2.netlify.app
+|
+*/
+
+const deployedFrontendUrls =
+  (process.env.FRONTEND_URL || "")
+    .split(",")
+    .map((url) =>
+      url.trim().replace(/\/$/, "")
+    )
+    .filter(Boolean);
+
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  ...deployedFrontendUrls,
+];
+
+console.log(
+  "Allowed frontend origins:",
+  allowedOrigins
+);
 
 /*
 |--------------------------------------------------------------------------
-| MIDDLEWARE
+| CORS MIDDLEWARE
 |--------------------------------------------------------------------------
 */
 
 app.use(
   cors({
-    origin: FRONTEND_URL,
+    origin: (origin, callback) => {
+      /*
+      |--------------------------------------------------------------------------
+      | Requests without an Origin header are allowed.
+      | Examples:
+      | - Render health checks
+      | - Postman
+      | - Direct browser API URL
+      |--------------------------------------------------------------------------
+      */
+
+      if (!origin) {
+        return callback(
+          null,
+          true
+        );
+      }
+
+      const normalizedOrigin =
+        origin.replace(/\/$/, "");
+
+      /*
+      |--------------------------------------------------------------------------
+      | ALLOW TRUSTED ORIGIN
+      |--------------------------------------------------------------------------
+      */
+
+      if (
+        allowedOrigins.includes(
+          normalizedOrigin
+        )
+      ) {
+        return callback(
+          null,
+          true
+        );
+      }
+
+      /*
+      |--------------------------------------------------------------------------
+      | BLOCK UNKNOWN ORIGIN
+      |--------------------------------------------------------------------------
+      */
+
+      console.error(
+        "Blocked by CORS:",
+        normalizedOrigin
+      );
+
+      return callback(
+        new Error(
+          `CORS blocked origin: ${normalizedOrigin}`
+        )
+      );
+    },
+
     credentials: true,
+
+    methods: [
+      "GET",
+      "POST",
+      "PUT",
+      "PATCH",
+      "DELETE",
+      "OPTIONS",
+    ],
+
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+    ],
   })
 );
 
-app.use(express.json());
+/*
+|--------------------------------------------------------------------------
+| JSON BODY
+|--------------------------------------------------------------------------
+*/
+
+app.use(
+  express.json({
+    limit: "1mb",
+  })
+);
 
 /*
 |--------------------------------------------------------------------------
@@ -72,6 +181,24 @@ app.get("/", (req, res) => {
       "Daily Planner Agent API is running",
   });
 });
+
+/*
+|--------------------------------------------------------------------------
+| HEALTH CHECK
+|--------------------------------------------------------------------------
+*/
+
+app.get(
+  "/api/health",
+  (req, res) => {
+    return res.json({
+      success: true,
+      status: "healthy",
+      message:
+        "Daily Planner Agent backend is working",
+    });
+  }
+);
 
 /*
 |--------------------------------------------------------------------------
@@ -96,11 +223,13 @@ app.get(
         error
       );
 
-      return res.status(500).json({
-        success: false,
-        message:
-          "Unable to get calendar events",
-      });
+      return res
+        .status(500)
+        .json({
+          success: false,
+          message:
+            "Unable to get calendar events",
+        });
     }
   }
 );
@@ -122,30 +251,42 @@ app.post(
         endTime,
       } = req.body;
 
+      /*
+      |--------------------------------------------------------------------------
+      | VALIDATION
+      |--------------------------------------------------------------------------
+      */
+
       if (
         !title ||
         !date ||
         !startTime ||
         !endTime
       ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Title, date, start time and end time are required",
-        });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message:
+              "Title, date, start time and end time are required",
+          });
       }
 
-      if (startTime >= endTime) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Start time must be before end time",
-        });
+      if (
+        startTime >= endTime
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message:
+              "Start time must be before end time",
+          });
       }
 
       /*
       |--------------------------------------------------------------------------
-      | CHECK CONFLICT
+      | CHECK CALENDAR CONFLICT
       |--------------------------------------------------------------------------
       */
 
@@ -157,16 +298,18 @@ app.post(
         });
 
       if (hasConflict) {
-        return res.status(409).json({
-          success: false,
-          message:
-            "This time conflicts with an existing calendar event",
-        });
+        return res
+          .status(409)
+          .json({
+            success: false,
+            message:
+              "This time conflicts with an existing calendar event",
+          });
       }
 
       /*
       |--------------------------------------------------------------------------
-      | CREATE FIXED EVENT
+      | CREATE FIXED CALENDAR EVENT
       |--------------------------------------------------------------------------
       */
 
@@ -176,27 +319,34 @@ app.post(
           date,
           startTime,
           endTime,
-          eventType: "FIXED",
+
+          eventType:
+            "FIXED",
+
           taskId: null,
         });
 
-      return res.status(201).json({
-        success: true,
-        message:
-          "Calendar event created successfully",
-        event: newEvent,
-      });
+      return res
+        .status(201)
+        .json({
+          success: true,
+          message:
+            "Calendar event created successfully",
+          event: newEvent,
+        });
     } catch (error) {
       console.error(
         "Create calendar event error:",
         error
       );
 
-      return res.status(500).json({
-        success: false,
-        message:
-          "Unable to create calendar event",
-      });
+      return res
+        .status(500)
+        .json({
+          success: false,
+          message:
+            "Unable to create calendar event",
+        });
     }
   }
 );
@@ -215,13 +365,17 @@ app.patch(
         Number(req.params.id);
 
       if (
-        !Number.isInteger(eventId)
+        !Number.isInteger(
+          eventId
+        )
       ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Invalid calendar event ID",
-        });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message:
+              "Invalid calendar event ID",
+          });
       }
 
       const updatedEvent =
@@ -231,18 +385,21 @@ app.patch(
         );
 
       if (!updatedEvent) {
-        return res.status(404).json({
-          success: false,
-          message:
-            "Calendar event not found",
-        });
+        return res
+          .status(404)
+          .json({
+            success: false,
+            message:
+              "Calendar event not found",
+          });
       }
 
       return res.json({
         success: true,
         message:
           "Calendar event updated successfully",
-        event: updatedEvent,
+        event:
+          updatedEvent,
       });
     } catch (error) {
       console.error(
@@ -250,11 +407,13 @@ app.patch(
         error
       );
 
-      return res.status(500).json({
-        success: false,
-        message:
-          "Unable to update calendar event",
-      });
+      return res
+        .status(500)
+        .json({
+          success: false,
+          message:
+            "Unable to update calendar event",
+        });
     }
   }
 );
@@ -273,13 +432,17 @@ app.delete(
         Number(req.params.id);
 
       if (
-        !Number.isInteger(eventId)
+        !Number.isInteger(
+          eventId
+        )
       ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Invalid calendar event ID",
-        });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message:
+              "Invalid calendar event ID",
+          });
       }
 
       const deleted =
@@ -288,11 +451,13 @@ app.delete(
         );
 
       if (!deleted) {
-        return res.status(404).json({
-          success: false,
-          message:
-            "Calendar event not found",
-        });
+        return res
+          .status(404)
+          .json({
+            success: false,
+            message:
+              "Calendar event not found",
+          });
       }
 
       return res.json({
@@ -306,11 +471,13 @@ app.delete(
         error
       );
 
-      return res.status(500).json({
-        success: false,
-        message:
-          "Unable to delete calendar event",
-      });
+      return res
+        .status(500)
+        .json({
+          success: false,
+          message:
+            "Unable to delete calendar event",
+        });
     }
   }
 );
@@ -338,11 +505,13 @@ app.get(
         error
       );
 
-      return res.status(500).json({
-        success: false,
-        message:
-          "Unable to get tasks",
-      });
+      return res
+        .status(500)
+        .json({
+          success: false,
+          message:
+            "Unable to get tasks",
+        });
     }
   }
 );
@@ -364,18 +533,33 @@ app.post(
         deadline,
       } = req.body;
 
+      /*
+      |--------------------------------------------------------------------------
+      | REQUIRED FIELDS
+      |--------------------------------------------------------------------------
+      */
+
       if (
         !title ||
-        duration === undefined ||
+        duration ===
+          undefined ||
         duration === null ||
         duration === ""
       ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Task name and duration are required",
-        });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message:
+              "Task name and duration are required",
+          });
       }
+
+      /*
+      |--------------------------------------------------------------------------
+      | DURATION VALIDATION
+      |--------------------------------------------------------------------------
+      */
 
       const numericDuration =
         Number(duration);
@@ -386,62 +570,87 @@ app.post(
         ) ||
         numericDuration <= 0
       ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Duration must be greater than 0",
-        });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message:
+              "Duration must be greater than 0",
+          });
       }
 
-      const allowedPriorities = [
-        "HIGH",
-        "MEDIUM",
-        "LOW",
-      ];
+      /*
+      |--------------------------------------------------------------------------
+      | PRIORITY VALIDATION
+      |--------------------------------------------------------------------------
+      */
+
+      const allowedPriorities =
+        [
+          "HIGH",
+          "MEDIUM",
+          "LOW",
+        ];
 
       const normalizedPriority =
-        priority || "MEDIUM";
+        priority ||
+        "MEDIUM";
 
       if (
         !allowedPriorities.includes(
           normalizedPriority
         )
       ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Priority must be HIGH, MEDIUM or LOW",
-        });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message:
+              "Priority must be HIGH, MEDIUM or LOW",
+          });
       }
+
+      /*
+      |--------------------------------------------------------------------------
+      | CREATE TASK
+      |--------------------------------------------------------------------------
+      */
 
       const newTask =
         addTask({
           title,
+
           duration:
             numericDuration,
+
           priority:
             normalizedPriority,
+
           deadline:
             deadline || null,
         });
 
-      return res.status(201).json({
-        success: true,
-        message:
-          "Task added successfully",
-        task: newTask,
-      });
+      return res
+        .status(201)
+        .json({
+          success: true,
+          message:
+            "Task added successfully",
+          task: newTask,
+        });
     } catch (error) {
       console.error(
         "Create task error:",
         error
       );
 
-      return res.status(500).json({
-        success: false,
-        message:
-          "Unable to create task",
-      });
+      return res
+        .status(500)
+        .json({
+          success: false,
+          message:
+            "Unable to create task",
+        });
     }
   }
 );
@@ -460,13 +669,17 @@ app.patch(
         Number(req.params.id);
 
       if (
-        !Number.isInteger(taskId)
+        !Number.isInteger(
+          taskId
+        )
       ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Invalid task ID",
-        });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message:
+              "Invalid task ID",
+          });
       }
 
       const updatedTask =
@@ -476,18 +689,21 @@ app.patch(
         );
 
       if (!updatedTask) {
-        return res.status(404).json({
-          success: false,
-          message:
-            "Task not found",
-        });
+        return res
+          .status(404)
+          .json({
+            success: false,
+            message:
+              "Task not found",
+          });
       }
 
       return res.json({
         success: true,
         message:
           "Task updated successfully",
-        task: updatedTask,
+        task:
+          updatedTask,
       });
     } catch (error) {
       console.error(
@@ -495,11 +711,13 @@ app.patch(
         error
       );
 
-      return res.status(500).json({
-        success: false,
-        message:
-          "Unable to update task",
-      });
+      return res
+        .status(500)
+        .json({
+          success: false,
+          message:
+            "Unable to update task",
+        });
     }
   }
 );
@@ -518,24 +736,32 @@ app.patch(
         Number(req.params.id);
 
       if (
-        !Number.isInteger(taskId)
+        !Number.isInteger(
+          taskId
+        )
       ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Invalid task ID",
-        });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message:
+              "Invalid task ID",
+          });
       }
 
       const task =
-        completeTask(taskId);
+        completeTask(
+          taskId
+        );
 
       if (!task) {
-        return res.status(404).json({
-          success: false,
-          message:
-            "Task not found",
-        });
+        return res
+          .status(404)
+          .json({
+            success: false,
+            message:
+              "Task not found",
+          });
       }
 
       return res.json({
@@ -550,11 +776,13 @@ app.patch(
         error
       );
 
-      return res.status(500).json({
-        success: false,
-        message:
-          "Unable to complete task",
-      });
+      return res
+        .status(500)
+        .json({
+          success: false,
+          message:
+            "Unable to complete task",
+        });
     }
   }
 );
@@ -573,13 +801,17 @@ app.patch(
         Number(req.params.id);
 
       if (
-        !Number.isInteger(taskId)
+        !Number.isInteger(
+          taskId
+        )
       ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Invalid task ID",
-        });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message:
+              "Invalid task ID",
+          });
       }
 
       /*
@@ -589,19 +821,23 @@ app.patch(
       */
 
       const task =
-        getTaskById(taskId);
+        getTaskById(
+          taskId
+        );
 
       if (!task) {
-        return res.status(404).json({
-          success: false,
-          message:
-            "Task not found",
-        });
+        return res
+          .status(404)
+          .json({
+            success: false,
+            message:
+              "Task not found",
+          });
       }
 
       /*
       |--------------------------------------------------------------------------
-      | REMOVE OLD SCHEDULED EVENT
+      | DELETE OLD SCHEDULED EVENT
       |--------------------------------------------------------------------------
       */
 
@@ -626,9 +862,12 @@ app.patch(
 
       return res.json({
         success: true,
+
         message:
           "Task marked as unfinished and ready for replanning",
-        task: unfinishedTask,
+
+        task:
+          unfinishedTask,
       });
     } catch (error) {
       console.error(
@@ -636,11 +875,14 @@ app.patch(
         error
       );
 
-      return res.status(500).json({
-        success: false,
-        message:
-          "Unable to mark task as unfinished",
-      });
+      return res
+        .status(500)
+        .json({
+          success: false,
+
+          message:
+            "Unable to mark task as unfinished",
+        });
     }
   }
 );
@@ -659,13 +901,17 @@ app.delete(
         Number(req.params.id);
 
       if (
-        !Number.isInteger(taskId)
+        !Number.isInteger(
+          taskId
+        )
       ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Invalid task ID",
-        });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message:
+              "Invalid task ID",
+          });
       }
 
       /*
@@ -675,14 +921,18 @@ app.delete(
       */
 
       const task =
-        getTaskById(taskId);
+        getTaskById(
+          taskId
+        );
 
       if (!task) {
-        return res.status(404).json({
-          success: false,
-          message:
-            "Task not found",
-        });
+        return res
+          .status(404)
+          .json({
+            success: false,
+            message:
+              "Task not found",
+          });
       }
 
       /*
@@ -706,14 +956,18 @@ app.delete(
       */
 
       const deleted =
-        deleteTask(taskId);
+        deleteTask(
+          taskId
+        );
 
       if (!deleted) {
-        return res.status(404).json({
-          success: false,
-          message:
-            "Task not found",
-        });
+        return res
+          .status(404)
+          .json({
+            success: false,
+            message:
+              "Task not found",
+          });
       }
 
       return res.json({
@@ -727,11 +981,13 @@ app.delete(
         error
       );
 
-      return res.status(500).json({
-        success: false,
-        message:
-          "Unable to delete task",
-      });
+      return res
+        .status(500)
+        .json({
+          success: false,
+          message:
+            "Unable to delete task",
+        });
     }
   }
 );
@@ -765,41 +1021,49 @@ app.post(
         !availableStart ||
         !availableEnd
       ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Date, available start time and available end time are required",
-        });
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Date, available start time and available end time are required",
+          });
       }
 
       /*
       |--------------------------------------------------------------------------
       | STEP 1
-      | RUN DETERMINISTIC PLANNER
+      | RUN CONFLICT-SAFE PLANNER
       |--------------------------------------------------------------------------
       */
 
       const result =
         runPlannerAgent({
           date,
+
           availableStart,
+
           availableEnd,
 
           avoidStart:
-            avoidStart || null,
+            avoidStart ||
+            null,
 
           avoidEnd:
-            avoidEnd || null,
+            avoidEnd ||
+            null,
         });
 
       /*
       |--------------------------------------------------------------------------
       | STEP 2
-      | GENERATE AI INSIGHT
+      | AI PLANNER INSIGHT
       |--------------------------------------------------------------------------
       */
 
-      let aiInsight = "";
+      let aiInsight =
+        "";
 
       try {
         aiInsight =
@@ -814,7 +1078,9 @@ app.post(
               result.unscheduledTasks ||
               [],
           });
-      } catch (aiError) {
+      } catch (
+        aiError
+      ) {
         console.error(
           "AI insight error:",
           aiError.message
@@ -822,7 +1088,7 @@ app.post(
 
         /*
         |--------------------------------------------------------------------------
-        | AI FAILURE MUST NOT BREAK PLANNER
+        | AI FAILURE DOES NOT BREAK THE PLANNER
         |--------------------------------------------------------------------------
         */
 
@@ -846,30 +1112,94 @@ app.post(
         error
       );
 
-      return res.status(500).json({
-        success: false,
+      return res
+        .status(500)
+        .json({
+          success: false,
 
-        message:
-          error.message ||
-          "Unable to create daily plan",
-      });
+          message:
+            error.message ||
+            "Unable to create daily plan",
+        });
     }
   }
 );
 
 /*
 |--------------------------------------------------------------------------
-| 404
+| 404 ROUTE
 |--------------------------------------------------------------------------
 */
 
-app.use((req, res) => {
-  return res.status(404).json({
-    success: false,
-    message:
-      "API route not found",
-  });
-});
+app.use(
+  (req, res) => {
+    return res
+      .status(404)
+      .json({
+        success: false,
+        message:
+          "API route not found",
+      });
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| ERROR HANDLER
+|--------------------------------------------------------------------------
+|
+| This is especially important for CORS.
+| It makes sure Express returns JSON instead of an HTML error page.
+|
+*/
+
+app.use(
+  (
+    error,
+    req,
+    res,
+    next
+  ) => {
+    console.error(
+      "Server error:",
+      error.message
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | CORS ERROR
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+      error.message?.startsWith(
+        "CORS blocked origin:"
+      )
+    ) {
+      return res
+        .status(403)
+        .json({
+          success: false,
+          message:
+            error.message,
+        });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | GENERIC ERROR
+    |--------------------------------------------------------------------------
+    */
+
+    return res
+      .status(500)
+      .json({
+        success: false,
+        message:
+          "Internal server error",
+      });
+  }
+);
 
 /*
 |--------------------------------------------------------------------------
@@ -877,8 +1207,12 @@ app.use((req, res) => {
 |--------------------------------------------------------------------------
 */
 
-app.listen(PORT, () => {
-  console.log(
-    `Daily Planner Agent backend running on http://localhost:${PORT}`
-  );
-});
+app.listen(
+  PORT,
+  "0.0.0.0",
+  () => {
+    console.log(
+      `Daily Planner Agent backend running on port ${PORT}`
+    );
+  }
+);
